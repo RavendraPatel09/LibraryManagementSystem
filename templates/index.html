@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Library Book Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+
+<!-- ── HEADER ──────────────────────────────────────────────── -->
+<header>
+  <div class="header-inner">
+    <div class="logo">
+      <span class="logo-icon">📚</span>
+      <span class="logo-text">LibraryOS</span>
+    </div>
+    <p class="tagline">Your personal book collection manager</p>
+  </div>
+</header>
+
+<!-- ── STATS BAR ────────────────────────────────────────────── -->
+<section class="stats-bar" id="statsBar">
+  <div class="stat-card"><span class="stat-num" id="statTotal">—</span><span class="stat-label">Total Books</span></div>
+  <div class="stat-card"><span class="stat-num" id="statAvail">—</span><span class="stat-label">Available</span></div>
+  <div class="stat-card"><span class="stat-num" id="statIssued">—</span><span class="stat-label">Issued</span></div>
+  <div class="stat-card"><span class="stat-num" id="statGenres">—</span><span class="stat-label">Genres</span></div>
+</section>
+
+<!-- ── MAIN ──────────────────────────────────────────────────── -->
+<main>
+
+  <!-- Search + Add Row -->
+  <div class="toolbar">
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="searchInput" placeholder="Search by title, author or genre…" />
+    </div>
+    <button class="btn-add" id="openModalBtn">＋ Add Book</button>
+  </div>
+
+  <!-- Book Table -->
+  <div class="table-wrap">
+    <table id="booksTable">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Title</th>
+          <th>Author</th>
+          <th>Genre</th>
+          <th>Year</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody">
+        <tr><td colspan="7" class="loading-row">Loading books…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</main>
+
+<!-- ── MODAL ─────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modalTitle">Add New Book</h2>
+      <button class="modal-close" id="closeModalBtn">✕</button>
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group full">
+        <label>Title <span class="req">*</span></label>
+        <input type="text" id="fTitle" placeholder="e.g. The Alchemist" />
+      </div>
+      <div class="form-group full">
+        <label>Author <span class="req">*</span></label>
+        <input type="text" id="fAuthor" placeholder="e.g. Paulo Coelho" />
+      </div>
+      <div class="form-group">
+        <label>Genre</label>
+        <input type="text" id="fGenre" placeholder="e.g. Fiction" />
+      </div>
+      <div class="form-group">
+        <label>Year</label>
+        <input type="text" id="fYear" placeholder="e.g. 1988" maxlength="4" />
+      </div>
+      <div class="form-group full">
+        <label>Status</label>
+        <select id="fStatus">
+          <option value="Available">Available</option>
+          <option value="Issued">Issued</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-error" id="formError"></div>
+
+    <div class="modal-footer">
+      <button class="btn-cancel" id="cancelBtn">Cancel</button>
+      <button class="btn-save"   id="saveBtn">Save Book</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── TOAST ──────────────────────────────────────────────────── -->
+<div class="toast" id="toast"></div>
+
+<script>
+  // ── State ──────────────────────────────────────────────────────────────────
+  let editingId = null;
+
+  // ── DOM refs ───────────────────────────────────────────────────────────────
+  const tableBody    = document.getElementById("tableBody");
+  const searchInput  = document.getElementById("searchInput");
+  const modalOverlay = document.getElementById("modalOverlay");
+  const modalTitle   = document.getElementById("modalTitle");
+  const formError    = document.getElementById("formError");
+  const toast        = document.getElementById("toast");
+
+  const fTitle  = document.getElementById("fTitle");
+  const fAuthor = document.getElementById("fAuthor");
+  const fGenre  = document.getElementById("fGenre");
+  const fYear   = document.getElementById("fYear");
+  const fStatus = document.getElementById("fStatus");
+
+  // ── Fetch helpers ──────────────────────────────────────────────────────────
+  async function api(url, method = "GET", body = null) {
+    const opts = { method, headers: { "Content-Type": "application/json" } };
+    if (body) opts.body = JSON.stringify(body);
+    const res  = await fetch(url, opts);
+    return res.json();
+  }
+
+  // ── Load books ─────────────────────────────────────────────────────────────
+  async function loadBooks(q = "") {
+    const url = q ? `/api/books?q=${encodeURIComponent(q)}` : "/api/books";
+    const books = await api(url);
+    renderTable(books);
+  }
+
+  function renderTable(books) {
+    if (books.length === 0) {
+      tableBody.innerHTML = `<tr><td colspan="7" class="loading-row">No books found.</td></tr>`;
+      return;
+    }
+    tableBody.innerHTML = books.map((b, i) => `
+      <tr class="book-row" style="animation-delay:${i * 40}ms">
+        <td class="td-num">${i + 1}</td>
+        <td class="td-title">${esc(b.title)}</td>
+        <td>${esc(b.author)}</td>
+        <td><span class="genre-tag">${esc(b.genre || "—")}</span></td>
+        <td>${esc(b.year || "—")}</td>
+        <td><span class="status-badge ${b.status === 'Available' ? 'status-avail' : 'status-issued'}">${b.status}</span></td>
+        <td class="td-actions">
+          <button class="btn-edit"   onclick="openEdit(${b.id},'${esc(b.title)}','${esc(b.author)}','${esc(b.genre)}','${esc(b.year)}','${b.status}')">✏️</button>
+          <button class="btn-delete" onclick="deleteBook(${b.id})">🗑️</button>
+        </td>
+      </tr>`).join("");
+  }
+
+  // ── Stats ──────────────────────────────────────────────────────────────────
+  async function loadStats() {
+    const s = await api("/api/stats");
+    document.getElementById("statTotal").textContent  = s.total;
+    document.getElementById("statAvail").textContent  = s.available;
+    document.getElementById("statIssued").textContent = s.issued;
+    document.getElementById("statGenres").textContent = s.genres;
+  }
+
+  // ── Modal open/close ───────────────────────────────────────────────────────
+  function openModal() {
+    editingId = null;
+    modalTitle.textContent = "Add New Book";
+    clearForm();
+    modalOverlay.classList.add("visible");
+    fTitle.focus();
+  }
+
+  function openEdit(id, title, author, genre, year, status) {
+    editingId = id;
+    modalTitle.textContent = "Edit Book";
+    fTitle.value  = title;
+    fAuthor.value = author;
+    fGenre.value  = genre === "—" ? "" : genre;
+    fYear.value   = year  === "—" ? "" : year;
+    fStatus.value = status;
+    formError.textContent = "";
+    modalOverlay.classList.add("visible");
+    fTitle.focus();
+  }
+
+  function closeModal() {
+    modalOverlay.classList.remove("visible");
+    clearForm();
+  }
+
+  function clearForm() {
+    fTitle.value = fAuthor.value = fGenre.value = fYear.value = "";
+    fStatus.value = "Available";
+    formError.textContent = "";
+  }
+
+  // ── Save (add or update) ───────────────────────────────────────────────────
+  async function saveBook() {
+    const payload = {
+      title:  fTitle.value.trim(),
+      author: fAuthor.value.trim(),
+      genre:  fGenre.value.trim(),
+      year:   fYear.value.trim(),
+      status: fStatus.value,
+    };
+    if (!payload.title || !payload.author) {
+      formError.textContent = "⚠ Title and Author are required.";
+      return;
+    }
+    let result;
+    if (editingId) {
+      result = await api(`/api/books/${editingId}`, "PUT", payload);
+    } else {
+      result = await api("/api/books", "POST", payload);
+    }
+    if (result.error) { formError.textContent = result.error; return; }
+    closeModal();
+    showToast(result.message);
+    loadBooks(searchInput.value);
+    loadStats();
+  }
+
+  // ── Delete ─────────────────────────────────────────────────────────────────
+  async function deleteBook(id) {
+    if (!confirm("Delete this book?")) return;
+    const result = await api(`/api/books/${id}`, "DELETE");
+    showToast(result.message);
+    loadBooks(searchInput.value);
+    loadStats();
+  }
+
+  // ── Toast ──────────────────────────────────────────────────────────────────
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add("show");
+    setTimeout(() => toast.classList.remove("show"), 2500);
+  }
+
+  // ── Escape HTML ────────────────────────────────────────────────────────────
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  // ── Event listeners ────────────────────────────────────────────────────────
+  document.getElementById("openModalBtn").addEventListener("click", openModal);
+  document.getElementById("closeModalBtn").addEventListener("click", closeModal);
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  document.getElementById("saveBtn").addEventListener("click", saveBook);
+
+  modalOverlay.addEventListener("click", e => { if (e.target === modalOverlay) closeModal(); });
+
+  let searchTimer;
+  searchInput.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => loadBooks(searchInput.value), 300);
+  });
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  loadBooks();
+  loadStats();
+</script>
+</body>
+</html>
